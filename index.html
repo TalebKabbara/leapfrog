@@ -1,1 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sales Funnel Kanban</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 1em;
+      background: #f4f4f4;
+    }
+    h1 {
+      text-align: center;
+    }
+    #search {
+      display: block;
+      margin: 0 auto 1em auto;
+      padding: 0.5em;
+      width: 300px;
+      font-size: 1em;
+    }
+    .funnel {
+      display: flex;
+      overflow-x: auto;
+      gap: 1em;
+    }
+    .column {
+      background: #fff;
+      padding: 1em;
+      border-radius: 8px;
+      flex: 1;
+      min-width: 200px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.1);
+    }
+    .column h2 {
+      text-align: center;
+      font-size: 1.1em;
+      margin-bottom: 0.5em;
+      text-transform: capitalize;
+    }
+    .card {
+      background: #e7f3ff;
+      border-radius: 6px;
+      padding: 0.5em;
+      margin-bottom: 0.5em;
+      cursor: grab;
+      position: relative;
+    }
+    .card small {
+      display: block;
+      color: #555;
+    }
+    .move-btn {
+      position: absolute;
+      right: 5px;
+      top: 5px;
+      font-size: 0.8em;
+      background: #007bff;
+      color: #fff;
+      border: none;
+      padding: 2px 5px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .overdue { background: #ffdddd; }
+    .thisweek { background: #ffe4b3; }
+    .nextweek { background: #ffffcc; }
+    .future { background: #ddffdd; }
+  </style>
+</head>
+<body>
 
+  <h1>Sales Funnel</h1>
+  <input type="text" id="search" placeholder="Search by name or company..." />
+
+  <div class="funnel" id="funnel"></div>
+
+  <!-- Modal -->
+  <div id="modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); justify-content:center; align-items:center;">
+    <div style="background:#fff; padding:1em; border-radius:8px; min-width:300px; max-width:90vw;">
+      <h3 id="modalName"></h3>
+      <p><strong>Company:</strong> <span id="modalCompany"></span></p>
+      <p><strong>Post:</strong> <span id="modalPost"></span></p>
+      <label>Notes:<br><textarea id="modalNotes" rows="4" style="width:100%"></textarea></label><br><br>
+      <label>Follow-up Date:<br><input type="date" id="modalDate" style="width:100%" /></label><br><br>
+      <button id="saveBtn">Save</button>
+      <button onclick="closeModal()">Close</button>
+    </div>
+  </div>
+
+  <script>
+    const WEBAPP_URL = "https://script.google.com/macros/s/AKfycbyudea35Ka_rP0qltMkbTQAzD9sf2nYVgrDfRe38vErvvx0-9QPbgpz1ihM_3RmPpGxQw/exec";
+
+    // Your secret token, must match the one in the GAS code
+    const SECRET_TOKEN = "Bloody_1234";
+
+    const stages = ["emailed", "contacted", "mailed", "meeting", "quoted", "won"];
+    let state = {
+      leads: [],
+      search: "",
+      selectedLead: null
+    };
+
+    document.getElementById("search").addEventListener("input", e => {
+      state.search = e.target.value.toLowerCase();
+      renderLeads();
+    });
+
+    function createColumn(stage) {
+      const col = document.createElement("div");
+      col.className = "column";
+      col.dataset.stage = stage;
+      col.innerHTML = `<h2>${stage}</h2>`;
+      col.addEventListener("dragover", e => e.preventDefault());
+      col.addEventListener("drop", e => {
+        const id = e.dataTransfer.getData("id");
+        const lead = state.leads.find(l => l.id == id);
+        if (lead) {
+          lead["Sales Response"] = stage;
+          updateSheet(lead);
+          renderLeads();
+        }
+      });
+      return col;
+    }
+
+    function renderLeads() {
+      const container = document.getElementById("funnel");
+      container.innerHTML = "";
+      const filtered = state.leads.filter(l =>
+        (!state.search || (l.Name && l.Name.toLowerCase().includes(state.search)) || (l.Company && l.Company.toLowerCase().includes(state.search)))
+      );
+
+      stages.forEach(stage => {
+        const col = createColumn(stage);
+        filtered
+          .filter(l => (l["Sales Response"] || "emailed").toLowerCase() === stage)
+          .forEach(lead => {
+            const card = document.createElement("div");
+            card.className = "card";
+            card.draggable = true;
+            card.dataset.id = lead.id;
+
+            const followUp = new Date(lead.FollowUp || "2099-12-31");
+            const today = new Date();
+            today.setHours(0,0,0,0);
+            followUp.setHours(0,0,0,0);
+            const diffDays = Math.floor((followUp - today) / (1000 * 60 * 60 * 24));
+            if (!isNaN(followUp)) {
+              if (diffDays === 0) card.classList.add("overdue");
+              else if (diffDays > 0 && diffDays <= 3) card.classList.add("thisweek");
+              else if (diffDays > 3 && diffDays <= 10) card.classList.add("nextweek");
+              else card.classList.add("future");
+            }
+
+            card.innerHTML = `
+              <strong>${lead.Company || ''}</strong><br>
+              <small>${lead.Name || ''}</small><br>
+              <small><em>Trigger: ${lead.Trigger || ''}</em></small>
+              <button class="move-btn">→</button>
+            `;
+            card.addEventListener("dragstart", e => e.dataTransfer.setData("id", lead.id));
+            card.addEventListener("click", () => openModal(lead));
+            card.querySelector(".move-btn").addEventListener("click", e => {
+              e.stopPropagation();
+              const nextStageIndex = stages.indexOf(lead["Sales Response"]) + 1;
+              if (nextStageIndex < stages.length) {
+                lead["Sales Response"] = stages[nextStageIndex];
+                updateSheet(lead);
+                renderLeads();
+              }
+            });
+            col.appendChild(card);
+          });
+        container.appendChild(col);
+      });
+    }
+
+    function openModal(lead) {
+      state.selectedLead = lead;
+      document.getElementById("modal").style.display = "flex";
+      document.getElementById("modalName").textContent = lead.Name;
+      document.getElementById("modalCompany").textContent = lead.Company;
+      document.getElementById("modalPost").textContent = lead.Post || "";
+      document.getElementById("modalNotes").value = lead.Notes || "";
+      document.getElementById("modalDate").value = lead.FollowUp || "";
+    }
+
+    function closeModal() {
+      document.getElementById("modal").style.display = "none";
+    }
+
+    document.getElementById("saveBtn").addEventListener("click", () => {
+      if (!state.selectedLead) return;
+      state.selectedLead.Notes = document.getElementById("modalNotes").value;
+      state.selectedLead.FollowUp = document.getElementById("modalDate").value;
+      updateSheet(state.selectedLead);
+      closeModal();
+      renderLeads();
+    });
+
+    function updateSheet(lead) {
+      fetch(WEBAPP_URL, {
+        method: "POST",
+        body: JSON.stringify({
+          token: SECRET_TOKEN,
+          Name: lead.Name,
+          Company: lead.Company,
+          "Sales Response": lead["Sales Response"] || "emailed",
+          Notes: lead.Notes || "",
+          FollowUp: lead.FollowUp || ""
+        }),
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    function loadData() {
+      fetch(WEBAPP_URL)
+        .then(res => res.json())
+        .then(data => {
+          state.leads = data.map((row, i) => ({
+            ...row,
+            id: i,
+            "Sales Response": row["Sales Response"] ? row["Sales Response"].toLowerCase() : "emailed"
+          }));
+          renderLeads();
+        });
+    }
+
+    loadData();
+  </script>
+</body>
+</html>
